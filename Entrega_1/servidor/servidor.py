@@ -19,7 +19,7 @@ while True:
     print(f"Received: {file_name} from {client_addr}")
 
     # Abre um arquivo localmente para salvar os dados recebidos do cliente
-    with open(f"server_{file_name}", "wb") as file:
+    with open(f"./servidor/server_{file_name}", "wb") as file:
         while True:
             data, client_addr = server_socket.recvfrom(BUFFER_SIZE)
             if data == b"END":  # Se receber "END", termina a recepção
@@ -35,7 +35,7 @@ while True:
     server_socket.sendto(new_file_name.encode(), client_addr)
 
     # Abre o arquivo salvo para leitura e envio de volta ao cliente
-    with open(f"server_{file_name}", "rb") as file:
+    with open(f"./servidor/server_{file_name}", "rb") as file:
         while chunk := file.read(BUFFER_SIZE):  # Lê o arquivo em pedaços
             server_socket.sendto(chunk, client_addr)  # Envia cada pedaço ao cliente
 
