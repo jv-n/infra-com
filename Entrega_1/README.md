@@ -11,3 +11,5 @@ Grupo
 - Heitor Higino Holanda Cordeiro         <hhhc>
 - Túlio Fernando Carvalho de lira        <tfcl>
 - João Victor da Silva Nascimento        <jvsn2>
+- Felipe Mateus Falcão Barreto           <fmfb>
+- Breno Ramos de Souza Gomes             <brsg>
