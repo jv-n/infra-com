@@ -5,7 +5,7 @@ import time
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 12000
 BUFFER_SIZE = 1024
-FILE_TO_SEND = "data.jpg"  # Arquivo a ser enviado
+FILE_TO_SEND = "data.txt"  # Arquivo a ser enviado
 
 # Criando o socket UDP
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
