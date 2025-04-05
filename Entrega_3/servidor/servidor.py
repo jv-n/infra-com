@@ -339,7 +339,7 @@ def handle_join(addr, parts):
         server_socket.sendto("Grupo não encontrado.".encode(), addr)
         return
 
-    if group["key"] != group_key:
+    if group["id"] != group_key:
         server_socket.sendto("Chave incorreta.".encode(), addr)
         return
 
