@@ -337,7 +337,6 @@ def handle_join(addr, parts):
     group_key = parts[2]
 
     username = clients.get(addr)
-    print("USUARIO: ",username)
     if not username:
         server_socket.sendto("Você precisa estar logado para entrar em um grupo.".encode(), addr)
         return
@@ -355,17 +354,45 @@ def handle_join(addr, parts):
         server_socket.sendto("Você já está no grupo.".encode(), addr)
         return
 
-    print("MEMBROS ANTES: ",group["members"])
-
     group["members"].add(addr)
     user_groups.setdefault(username["username"], set()).add(group_name)
-    print("MEMBROS DEPOIS: ",group["members"])
     server_socket.sendto(f"✅ Você entrou no grupo {group_name}".encode(), addr)
 
     join_message = f"[{username["username"]}/{addr[0]}:{addr[1]}] {username["username"]} acabou de entrar no grupo"
     for member_addr in group["members"]:
         if member_addr != addr:
             server_socket.sendto(join_message.encode(), member_addr)
+
+def handle_chat_group(addr, parts):
+    if len(parts) < 4:
+        server_socket.sendto("Uso: chat_group <nome_do_grupo> <chave_grupo> <mensagem>".encode(), addr)
+        return
+
+    group_name = parts[1]
+    group_key = parts[2]
+    message = ' '.join(parts[3:])
+
+    username = clients.get(addr)
+    if not username:
+        server_socket.sendto("Você precisa estar logado para entrar em um grupo.".encode(), addr)
+        return
+
+    group = groups.get(group_name)
+    if not group:
+        server_socket.sendto("Grupo não encontrado.".encode(), addr)
+        return
+
+    if group["id"] != group_key:
+        server_socket.sendto("Chave incorreta.".encode(), addr)
+        return
+
+    if addr in group["members"]:
+        for member in group['members']:
+            if member:
+                msg = f"[{username}/{addr[0]}:{addr[1]}]: {message}"
+                server_socket.sendto(msg.encode(), member)
+        server_socket.sendto(f"Mensagem enviada".encode(), addr)
+        return
 
 
 handlers = {
@@ -381,7 +408,8 @@ handlers = {
     "list:mygroups": handle_list_mygroups,
     "leave": handle_leave,
     "ban": handle_ban,
-    "join": handle_join
+    "join": handle_join,
+    "chat_group": handle_chat_group
 }
 
 # Thread para escutar comandos dos clientes

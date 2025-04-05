@@ -38,6 +38,7 @@ print(" - list:mygroups")
 print(" - leave <nome_do_grupo>")
 print(" - ban <usuario> <grupo>")
 print(" - join <nome_do_grupo> <chave_grupo>")
+print(" - chat_group <nome_do_grupo> <chave_grupo> <mensagem>")
 print(" - /exit para sair")
 
 while True:
