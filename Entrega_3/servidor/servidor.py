@@ -149,20 +149,21 @@ def handle_leave(addr, parts):
 
     username = client['username']
     group_name = parts[1]
+    print("GROUP NAME: ", group_name)
     group = groups.get(group_name)
-
-    if not group or username not in group['members']:
+    print("GROUP MEMBERS: ", group['members'])
+    if not group or addr not in group['members']:
         server_socket.sendto("Você não participa desse grupo.".encode(), addr)
         return
 
-    group['members'].remove(username)
+    group['members'].remove(addr)
     user_groups.get(username, set()).discard(group_name)
 
     for member in group['members']:
-        m_addr = addr_by_username.get(member)
-        if m_addr:
+        if member:
             msg = f"[{username}/{addr[0]}:{addr[1]}] {username} saiu do grupo"
-            server_socket.sendto(msg.encode(), m_addr)
+            server_socket.sendto(msg.encode(), member)
+    server_socket.sendto(f"Você saiu do grupo {group_name}!".encode(), addr)
 
 def handle_ban(addr, parts):
     client = clients.get(addr)
@@ -179,11 +180,13 @@ def handle_ban(addr, parts):
     group_name = parts[2]
 
     group = groups.get(group_name)
+    print("GRUPO: ", group)
     if not group or group['admin'] != admin:
         server_socket.sendto("Apenas o administrador pode banir membros do grupo.".encode(), addr)
         return
-
-    if target not in group['members']:
+    t_addr = addr_by_username.get(target)
+    print("TARGET NOVO: ", t_addr)
+    if t_addr not in group['members']:
         server_socket.sendto(f"{target} não é membro do grupo.".encode(), addr)
         return
 
