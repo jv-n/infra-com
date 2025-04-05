@@ -23,6 +23,7 @@ server_socket.bind(('', serverPort))
 print(f"Servidor pronto na porta {serverPort}")
 
 # --- Funções de Grupo ---
+
 def handle_create_group(addr, parts):
     client = clients.get(addr)
     if not client:
@@ -51,7 +52,7 @@ def handle_create_group(addr, parts):
         "id": group_id,
         "admin": username,
         "created_at": created_at,
-        "members": {username},
+        "members": {addr},
         "banned": set()
     }
 
@@ -330,6 +331,7 @@ def handle_join(addr, parts):
     group_key = parts[2]
 
     username = clients.get(addr)
+    print("USUARIO: ",username)
     if not username:
         server_socket.sendto("Você precisa estar logado para entrar em um grupo.".encode(), addr)
         return
@@ -347,10 +349,14 @@ def handle_join(addr, parts):
         server_socket.sendto("Você já está no grupo.".encode(), addr)
         return
 
+    print("MEMBROS ANTES: ",group["members"])
+
     group["members"].add(addr)
+
+    print("MEMBROS DEPOIS: ",group["members"])
     server_socket.sendto(f"✅ Você entrou no grupo {group_name}".encode(), addr)
 
-    join_message = f"[{username}/{addr[0]}:{addr[1]}] {username} acabou de entrar no grupo"
+    join_message = f"[{username["username"]}/{addr[0]}:{addr[1]}] {username["username"]} acabou de entrar no grupo"
     for member_addr in group["members"]:
         if member_addr != addr:
             server_socket.sendto(join_message.encode(), member_addr)
