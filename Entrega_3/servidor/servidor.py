@@ -394,6 +394,34 @@ def handle_chat_group(addr, parts):
         server_socket.sendto(f"Mensagem enviada".encode(), addr)
         return
 
+def handle_chat_friend(addr, parts):
+    if len(parts) < 3:
+        server_socket.sendto("Uso: chat_friend <nome_do_amigo> <mensagem>".encode(), addr)
+        return
+
+    friend_name = parts[1]
+    message = ' '.join(parts[2:])
+
+    username = clients.get(addr)
+    if not username:
+        server_socket.sendto("Você precisa estar logado para enviar mensagens.".encode(), addr)
+        return
+
+    amigos = following_map.get(username)
+    if not amigos or friend_name not in amigos:
+        server_socket.sendto(f"{friend_name} não está na sua lista de amigos.".encode(), addr)
+        return
+
+    destinatario_addr = addr_by_username.get(friend_name)
+    if not destinatario_addr:
+        server_socket.sendto(f"{friend_name} não está online.".encode(), addr)
+        return
+
+    msg = f"[{username}/{addr[0]}:{addr[1]} -> {friend_name}]: {message}"
+    server_socket.sendto(msg.encode(), destinatario_addr)
+
+    server_socket.sendto(f"Mensagem enviada para {friend_name}.".encode(), addr)
+
 
 handlers = {
     "login": handle_login,
@@ -409,7 +437,8 @@ handlers = {
     "leave": handle_leave,
     "ban": handle_ban,
     "join": handle_join,
-    "chat_group": handle_chat_group
+    "chat_group": handle_chat_group,
+    "chat_friend": handle_chat_friend
 }
 
 # Thread para escutar comandos dos clientes
