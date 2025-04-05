@@ -1,0 +1,77 @@
+def handle_join(addr, parts):
+    if len(parts) < 3:
+        server_socket.sendto("Uso: join <nome_do_grupo> <chave_grupo>".encode(), addr)
+        return
+
+    group_name = parts[1]
+    group_key = parts[2]
+
+    client = clients.get(addr)
+    if not client:
+        server_socket.sendto("Você precisa estar logado para entrar em um grupo.".encode(), addr)
+        return
+
+    username = client['username']
+    group = groups.get(group_name)
+    if not group:
+        server_socket.sendto("Grupo não encontrado.".encode(), addr)
+        return
+
+    if group["id"] != group_key:
+        server_socket.sendto("Chave incorreta.".encode(), addr)
+        return
+
+    if username in group["banned"]:
+        server_socket.sendto("Você foi banido deste grupo.".encode(), addr)
+        return
+
+    if username in group["members"]:
+        server_socket.sendto("Você já está no grupo.".encode(), addr)
+        return
+
+    group["members"].add(username)
+    user_groups.setdefault(username, set()).add(group_name)
+    server_socket.sendto(f"✅ Você entrou no grupo {group_name}".encode(), addr)
+
+    join_message = f"[{username}/{addr[0]}:{addr[1]}] {username} acabou de entrar no grupo"
+    for member in group["members"]:
+        if member == username:
+            continue
+        m_addr = addr_by_username.get(member)
+        if m_addr:
+            server_socket.sendto(join_message.encode(), m_addr)
+
+def handle_list_groups(addr, parts):
+    client = clients.get(addr)
+    if not client:
+        server_socket.sendto("Você precisa estar logado.".encode(), addr)
+        return
+
+    username = client['username']
+    my_groups = user_groups.get(username, set())
+    if not my_groups:
+        server_socket.sendto("Você não participa de nenhum grupo.".encode(), addr)
+        return
+
+    lines = []
+    for g in my_groups:
+        group = groups.get(g)
+        if group:
+            lines.append(f"Grupo: {g}, Criado em: {group['created_at']}, Admin: {group['admin']}")
+
+    server_socket.sendto("\n".join(lines).encode(), addr)
+
+def handle_list_mygroups(addr, parts):
+    client = clients.get(addr)
+    if not client:
+        server_socket.sendto("Você precisa estar logado.".encode(), addr)
+        return
+
+    username = client['username']
+    my_created = created_groups.get(username, set())
+    if not my_created:
+        server_socket.sendto("Você não criou nenhum grupo.".encode(), addr)
+        return
+
+    lines = [f"{g} - chave: {groups[g]['id']}" for g in my_created if g in groups]
+    server_socket.sendto("\n".join(lines).encode(), addr)
