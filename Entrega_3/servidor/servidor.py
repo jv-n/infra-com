@@ -79,26 +79,33 @@ def handle_delete_group(addr, parts):
         server_socket.sendto("Grupo inexistente.".encode(), addr)
         return
 
+    # Verifica se quem enviou o comando é o admin
     if group['admin'] != username:
         server_socket.sendto("Apenas o administrador pode excluir o grupo.".encode(), addr)
         return
 
-    # Notificar membros
-    for member in group['members']:
-        if member == username:
-            continue
-        m_addr = addr_by_username.get(member)
-        if m_addr:
-            msg = f"[{username}/{addr[0]}:{addr[1]}] O grupo {group_name} foi deletado pelo administrador"
-            server_socket.sendto(msg.encode(), m_addr)
+    # Notificar membros (endereços) que o grupo foi deletado
+    for member_addr in group['members']:
+        if member_addr == addr:
+            continue  # não precisa notificar o admin
+        msg = f"[{username}/{addr[0]}:{addr[1]}] O grupo '{group_name}' foi deletado pelo administrador."
+        server_socket.sendto(msg.encode(), member_addr)
 
-    # Limpar
-    for member in group['members']:
-        user_groups.get(member, set()).discard(group_name)
+        # Remove o grupo da lista de grupos do usuário
+        member_client = clients.get(member_addr)
+        if member_client:
+            member_username = member_client['username']
+            user_groups.get(member_username, set()).discard(group_name)
+            member_admin = group['admin']
+            user_groups.get(member_admin, set()).discard(group_name)
 
+    # Remove o grupo da lista de grupos criados pelo admin
     created_groups.get(username, set()).discard(group_name)
+
+    # Remove o grupo do dicionário principal
     groups.pop(group_name)
-    server_socket.sendto(f"Grupo {group_name} excluído com sucesso.".encode(), addr)
+
+    server_socket.sendto(f"Grupo '{group_name}' excluído com sucesso.".encode(), addr)
 
 def handle_list_groups(addr, parts):
     client = clients.get(addr)
@@ -190,8 +197,10 @@ def handle_ban(addr, parts):
         server_socket.sendto(f"{target} não é membro do grupo.".encode(), addr)
         return
 
-    group['members'].discard(target)
-    group['banned'].add(target)
+    group['members'].remove(t_addr)
+    print("MEMBERS: ", group['members'])
+    group['banned'].add(t_addr)
+    print("BANIDOS: ", group['banned'])
     user_groups.get(target, set()).discard(group_name)
 
     for member in group['members']:
@@ -221,7 +230,7 @@ def handle_login(addr, parts):
         addr_by_username[username] = addr
         users_online.add(username)
         following_map.setdefault(username, set())
-        server_socket.sendto(f"Usuário {username} logado com sucesso.".encode(), addr)
+        server_socket.sendto(f"Oi {username}, você está online!".encode(), addr)
         print(f"[LOGIN] {username} ({addr})")
 
 def handle_logout(addr, parts):
@@ -353,6 +362,10 @@ def handle_join(addr, parts):
     if addr in group["members"]:
         server_socket.sendto("Você já está no grupo.".encode(), addr)
         return
+        
+    if addr in group['banned']:
+        server_socket.sendto("Você foi banido deste grupo.".encode(), addr)
+        return
 
     group["members"].add(addr)
     user_groups.setdefault(username["username"], set()).add(group_name)
@@ -388,9 +401,9 @@ def handle_chat_group(addr, parts):
 
     if addr in group["members"]:
         for member in group['members']:
-            if member:
+            if member not in group['banned']:  # Verificação se o membro está banido
                 msg = f"[{username}/{addr[0]}:{addr[1]}]: {message}"
-                server_socket.sendto(msg.encode(), member)
+                server_socket.sendto(msg.encode(), member)  # Envia a mensagem para o membro não banido
         server_socket.sendto(f"Mensagem enviada".encode(), addr)
         return
 
@@ -402,10 +415,13 @@ def handle_chat_friend(addr, parts):
     friend_name = parts[1]
     message = ' '.join(parts[2:])
 
-    username = clients.get(addr)
-    if not username:
+
+    client = clients.get(addr)
+    if not client:
         server_socket.sendto("Você precisa estar logado para enviar mensagens.".encode(), addr)
         return
+    
+    username = client["username"]
 
     amigos = following_map.get(username)
     if not amigos or friend_name not in amigos:
