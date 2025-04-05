@@ -7,6 +7,10 @@ import uuid
 serverPort = 12000
 BUFFER_SIZE = 1024
 
+# Estado do RDT
+expected_seq = {}
+send_seq = {}
+
 # Estruturas de controle
 clients = {}        # addr -> { username, login_time }
 users_online = set()
@@ -16,33 +20,117 @@ groups = {}            # group_name -> { id, admin, created_at, members, banned 
 user_groups = {}       # username -> set of group names
 created_groups = {}    # username -> set of group names criados
 
+
 # Criando socket UDP
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_socket.bind(('', serverPort))
+server_socket.settimeout(1)
 
-print(f"Servidor pronto na porta {serverPort}")
+print(f"[SERVIDOR] Servidor pronto na porta {serverPort}")
 
-# --- Funções de Grupo ---
+# Função RDT de recepção
+def rdt_recvfrom():
+    while True:
+        try:
+            data, addr = server_socket.recvfrom(BUFFER_SIZE)
+        except socket.timeout:
+            continue
+
+        seq_num = data[0]
+        payload = data[1:]
+
+
+        if addr not in expected_seq:
+            expected_seq[addr] = 0
+
+        if seq_num == expected_seq[addr]:
+            server_socket.sendto(f"ACK {seq_num}".encode(), addr)
+            expected_seq[addr] = 1 - expected_seq[addr]
+            return payload.decode(), addr
+        else:
+            server_socket.sendto(f"ACK {1 - expected_seq[addr]}".encode(), addr)
+            continue
+
+# Função RDT de envio
+def rdt_sendto(message: str, addr):
+    if addr not in send_seq:
+        send_seq[addr] = 0
+
+    packet = bytes([send_seq[addr]]) + message.encode()
+
+
+    while True:
+        server_socket.sendto(packet, addr)
+        try:
+            ack, _ = server_socket.recvfrom(BUFFER_SIZE)
+            if ack.decode() == f"ACK {send_seq[addr]}":
+                send_seq[addr] = 1 - send_seq[addr]
+                return
+        except socket.timeout:
+            print(f"⚠️  Timeout: reenviando pacote para {addr}...")
+
+# Manipuladores de comandos
+def handle_login(addr, parts):
+    if len(parts) < 2:
+        rdt_sendto("Erro: comando 'login' requer um nome de usuário.", addr)
+        return
+
+    username = parts[1]
+    if username in users_online:
+        rdt_sendto(f"Erro: usuário {username} já está logado.", addr)
+    else:
+        clients[addr] = {
+            "username": username,
+            "login_time": datetime.now()
+        }
+        users_online.add(username)
+        rdt_sendto(f"Usuário {username} logado com sucesso.", addr)
+        print(f"[LOGIN] {username} ({addr}) logado.")
+
+def handle_logout(addr, parts):
+    client = clients.get(addr)
+    if client:
+        username = client['username']
+        users_online.discard(username)
+        clients.pop(addr)
+        rdt_sendto(f"Logout do usuário {username} realizado com sucesso.", addr)
+        print(f"[LOGOUT] {username} ({addr}) deslogado.")
+    else:
+        rdt_sendto("Erro: usuário não está logado.", addr)
+
+def handle_list_cinners(addr, parts):
+    if addr not in clients:
+        rdt_sendto("Você precisa estar logado para usar esse comando.", addr)
+        return
+
+    if not users_online:
+        rdt_sendto("Nenhum usuário está conectado no momento.", addr)
+    else:
+        lista = "\n".join(users_online)
+        rdt_sendto(f"Usuários online:\n{lista}", addr)
+
+
+
 
 def handle_create_group(addr, parts):
     client = clients.get(addr)
     if not client:
-        server_socket.sendto("Você precisa estar logado para criar um grupo.".encode(), addr)
+        rdt_sendto("Você precisa estar logado para criar um grupo.", addr)
         return
 
     if len(parts) < 2:
-        server_socket.sendto("Uso: create_group <nome_do_grupo>".encode(), addr)
+        rdt_sendto("Uso: create_group <nome_do_grupo>", addr)
         return
 
     username = client['username']
     group_name = parts[1]
 
     if group_name in groups and groups[group_name]['admin'] == username:
-        server_socket.sendto("Erro: você já criou um grupo com esse nome.".encode(), addr)
+        rdt_sendto("Erro: você já criou um grupo com esse nome.", addr)
         return
 
     if group_name in groups:
-        server_socket.sendto("Erro: esse nome de grupo já está em uso.".encode(), addr)
+        rdt_sendto("Erro: esse nome de grupo já está em uso.", addr)
         return
 
     group_id = str(uuid.uuid4())[:8]
@@ -59,16 +147,16 @@ def handle_create_group(addr, parts):
     user_groups.setdefault(username, set()).add(group_name)
     created_groups.setdefault(username, set()).add(group_name)
 
-    server_socket.sendto(f"O grupo de nome {group_name} foi criado com sucesso!".encode(), addr)
+    rdt_sendto(f"O grupo de nome {group_name} foi criado com sucesso!", addr)
 
 def handle_delete_group(addr, parts):
     client = clients.get(addr)
     if not client:
-        server_socket.sendto("Você precisa estar logado para excluir um grupo.".encode(), addr)
+        rdt_sendto("Você precisa estar logado para excluir um grupo.", addr)
         return
 
     if len(parts) < 2:
-        server_socket.sendto("Uso: delete_group <nome_do_grupo>".encode(), addr)
+        rdt_sendto("Uso: delete_group <nome_do_grupo>", addr)
         return
 
     username = client['username']
@@ -76,12 +164,12 @@ def handle_delete_group(addr, parts):
 
     group = groups.get(group_name)
     if not group:
-        server_socket.sendto("Grupo inexistente.".encode(), addr)
+        rdt_sendto("Grupo inexistente.", addr)
         return
 
     # Verifica se quem enviou o comando é o admin
     if group['admin'] != username:
-        server_socket.sendto("Apenas o administrador pode excluir o grupo.".encode(), addr)
+        rdt_sendto("Apenas o administrador pode excluir o grupo.", addr)
         return
 
     # Notificar membros (endereços) que o grupo foi deletado
@@ -89,7 +177,7 @@ def handle_delete_group(addr, parts):
         if member_addr == addr:
             continue  # não precisa notificar o admin
         msg = f"[{username}/{addr[0]}:{addr[1]}] O grupo '{group_name}' foi deletado pelo administrador."
-        server_socket.sendto(msg.encode(), member_addr)
+        rdt_sendto(msg, member_addr)
 
         # Remove o grupo da lista de grupos do usuário
         member_client = clients.get(member_addr)
@@ -105,12 +193,12 @@ def handle_delete_group(addr, parts):
     # Remove o grupo do dicionário principal
     groups.pop(group_name)
 
-    server_socket.sendto(f"Grupo '{group_name}' excluído com sucesso.".encode(), addr)
+    rdt_sendto(f"Grupo '{group_name}' excluído com sucesso.", addr)
 
 def handle_list_groups(addr, parts):
     client = clients.get(addr)
     if not client:
-        server_socket.sendto("Você precisa estar logado.".encode(), addr)
+        rdt_sendto("Você precisa estar logado.", addr)
         return
 
     username = client['username']
@@ -119,7 +207,7 @@ def handle_list_groups(addr, parts):
     print("USERGROUPS", user_groups)
     print("MYGROUPS: ", my_groups)
     if not my_groups:
-        server_socket.sendto("Você não participa de nenhum grupo.".encode(), addr)
+        rdt_sendto("Você não participa de nenhum grupo.", addr)
         return
 
     lines = []
@@ -127,31 +215,31 @@ def handle_list_groups(addr, parts):
         group = groups[g]
         lines.append(f"Grupo: {g}, Criado em: {group['created_at']}, Admin: {group['admin']}")
 
-    server_socket.sendto("\n".join(lines).encode(), addr)
+    rdt_sendto("\n".join(lines), addr)
 
 def handle_list_mygroups(addr, parts):
     client = clients.get(addr)
     if not client:
-        server_socket.sendto("Você precisa estar logado.".encode(), addr)
+        rdt_sendto("Você precisa estar logado.", addr)
         return
 
     username = client['username']
     my_created = created_groups.get(username, set())
     if not my_created:
-        server_socket.sendto("Você não criou nenhum grupo.".encode(), addr)
+        rdt_sendto("Você não criou nenhum grupo.", addr)
         return
 
     lines = [f"{g} - chave: {groups[g]['id']}" for g in my_created]
-    server_socket.sendto("\n".join(lines).encode(), addr)
+    rdt_sendto("\n".join(lines), addr)
 
 def handle_leave(addr, parts):
     client = clients.get(addr)
     if not client:
-        server_socket.sendto("Você precisa estar logado.".encode(), addr)
+        rdt_sendto("Você precisa estar logado.", addr)
         return
 
     if len(parts) < 2:
-        server_socket.sendto("Uso: leave <nome_do_grupo>".encode(), addr)
+        rdt_sendto("Uso: leave <nome_do_grupo>", addr)
         return
 
     username = client['username']
@@ -160,7 +248,7 @@ def handle_leave(addr, parts):
     group = groups.get(group_name)
     print("GROUP MEMBERS: ", group['members'])
     if not group or addr not in group['members']:
-        server_socket.sendto("Você não participa desse grupo.".encode(), addr)
+        rdt_sendto("Você não participa desse grupo.", addr)
         return
 
     group['members'].remove(addr)
@@ -169,17 +257,17 @@ def handle_leave(addr, parts):
     for member in group['members']:
         if member:
             msg = f"[{username}/{addr[0]}:{addr[1]}] {username} saiu do grupo"
-            server_socket.sendto(msg.encode(), member)
-    server_socket.sendto(f"Você saiu do grupo {group_name}!".encode(), addr)
+            rdt_sendto(msg, member)
+    rdt_sendto(f"Você saiu do grupo {group_name}!", addr)
 
 def handle_ban(addr, parts):
     client = clients.get(addr)
     if not client:
-        server_socket.sendto("Você precisa estar logado.".encode(), addr)
+        rdt_sendto("Você precisa estar logado.", addr)
         return
 
     if len(parts) < 3:
-        server_socket.sendto("Uso: ban <nome_do_usuario> <nome_do_grupo>".encode(), addr)
+        rdt_sendto("Uso: ban <nome_do_usuario> <nome_do_grupo>", addr)
         return
 
     admin = client['username']
@@ -189,12 +277,12 @@ def handle_ban(addr, parts):
     group = groups.get(group_name)
     print("GRUPO: ", group)
     if not group or group['admin'] != admin:
-        server_socket.sendto("Apenas o administrador pode banir membros do grupo.".encode(), addr)
+        rdt_sendto("Apenas o administrador pode banir membros do grupo.", addr)
         return
     t_addr = addr_by_username.get(target)
     print("TARGET NOVO: ", t_addr)
     if t_addr not in group['members']:
-        server_socket.sendto(f"{target} não é membro do grupo.".encode(), addr)
+        rdt_sendto(f"{target} não é membro do grupo.", addr)
         return
 
     group['members'].remove(t_addr)
@@ -207,139 +295,92 @@ def handle_ban(addr, parts):
         m_addr = addr_by_username.get(member)
         if m_addr:
             msg = f"{target} foi banido do grupo"
-            server_socket.sendto(msg.encode(), m_addr)
+            rdt_sendto(msg, m_addr)
 
     target_addr = addr_by_username.get(target)
     if target_addr:
         msg = f"[{admin}/{addr[0]}:{addr[1]}] O administrador do grupo {group_name} o baniu"
-        server_socket.sendto(msg.encode(), target_addr)
+        rdt_sendto(msg, target_addr)
 
-def handle_login(addr, parts):
-    if len(parts) < 2:
-        server_socket.sendto("Erro: comando 'login' requer um nome de usuário.".encode(), addr)
-        return
-
-    username = parts[1]
-    if username in users_online:
-        server_socket.sendto(f"Erro: usuário {username} já está logado.".encode(), addr)
-    else:
-        clients[addr] = {
-            "username": username,
-            "login_time": datetime.now()
-        }
-        addr_by_username[username] = addr
-        users_online.add(username)
-        following_map.setdefault(username, set())
-        server_socket.sendto(f"Oi {username}, você está online!".encode(), addr)
-        print(f"[LOGIN] {username} ({addr})")
-
-def handle_logout(addr, parts):
-    client = clients.get(addr)
-    if client:
-        username = client['username']
-        users_online.discard(username)
-        clients.pop(addr)
-        addr_by_username.pop(username, None)
-        following_map.pop(username, None)
-
-        # Remover usuário dos grupos
-        for group in groups.values():
-            group['members'].discard(username)
-
-        server_socket.sendto(f"Logout do usuário {username} realizado com sucesso.".encode(), addr)
-        print(f"[LOGOUT] {username} ({addr})")
-    else:
-        server_socket.sendto("Erro: usuário não está logado.".encode(), addr)
-
-def handle_list_cinners(addr, parts):
-    if addr not in clients:
-        server_socket.sendto("Você precisa estar logado para usar esse comando.".encode(), addr)
-        return
-
-    if not users_online:
-        server_socket.sendto("Nenhum usuário está conectado no momento.".encode(), addr)
-    else:
-        lista = "\n".join(users_online)
-        server_socket.sendto(f"Usuários online:\n{lista}".encode(), addr)
 
 def handle_list_friends(addr, parts):
     client = clients.get(addr)
     if not client:
-        server_socket.sendto("Você precisa estar logado para usar esse comando.".encode(), addr)
+        rdt_sendto("Você precisa estar logado para usar esse comando.", addr)
         return
 
     username = client['username']
     friends = following_map.get(username, set())
 
     if not friends:
-        server_socket.sendto("Você ainda não segue ninguém.".encode(), addr)
+        rdt_sendto("Você ainda não segue ninguém.", addr)
     else:
         lista = "\n".join(friends)
-        server_socket.sendto(f"Você está seguindo:\n{lista}".encode(), addr)
+        rdt_sendto(f"Você está seguindo:\n{lista}", addr)
 
 def handle_follow(addr, parts):
     client = clients.get(addr)
     if not client:
-        server_socket.sendto("Você precisa estar logado para seguir alguém.".encode(), addr)
+        rdt_sendto("Você precisa estar logado para seguir alguém.", addr)
         return
 
     if len(parts) < 2:
-        server_socket.sendto("Uso: follow <nome_do_usuario>".encode(), addr)
+        rdt_sendto("Uso: follow <nome_do_usuario>", addr)
         return
 
     follower = client['username']
     target = parts[1]
 
     if target == follower:
-        server_socket.sendto("Você não pode seguir a si mesmo.".encode(), addr)
+        rdt_sendto("Você não pode seguir a si mesmo.", addr)
         return
 
     if target not in users_online:
-        server_socket.sendto(f"O usuário {target} não está online.".encode(), addr)
+        rdt_sendto(f"O usuário {target} não está online.", addr)
         return
 
     if target in following_map[follower]:
-        server_socket.sendto(f"Você já está seguindo {target}.".encode(), addr)
+        rdt_sendto(f"Você já está seguindo {target}.", addr)
         return
 
     following_map[follower].add(target)
-    server_socket.sendto(f"{target} foi adicionado à sua lista de amigos seguidos.".encode(), addr)
+    rdt_sendto(f"{target} foi adicionado à sua lista de amigos seguidos.", addr)
 
     # Notifica quem foi seguido
     target_addr = addr_by_username.get(target)
     if target_addr:
         notify = f"Você foi seguido por <{follower}> / {addr[0]}:{addr[1]}"
-        server_socket.sendto(notify.encode(), target_addr)
+        rdt_sendto(notify, target_addr)
 
 def handle_unfollow(addr, parts):
     client = clients.get(addr)
     if not client:
-        server_socket.sendto("Você precisa estar logado para deixar de seguir alguém.".encode(), addr)
+        rdt_sendto("Você precisa estar logado para deixar de seguir alguém.", addr)
         return
 
     if len(parts) < 2:
-        server_socket.sendto("Uso: unfollow <nome_do_usuario>".encode(), addr)
+        rdt_sendto("Uso: unfollow <nome_do_usuario>", addr)
         return
 
     follower = client['username']
     target = parts[1]
 
     if target not in following_map.get(follower, set()):
-        server_socket.sendto(f"Você não está seguindo {target}.".encode(), addr)
+        rdt_sendto(f"Você não está seguindo {target}.", addr)
         return
 
     following_map[follower].discard(target)
-    server_socket.sendto(f"Você deixou de seguir {target}.".encode(), addr)
+    rdt_sendto(f"Você deixou de seguir {target}.", addr)
 
     # Notifica quem deixou de ser seguido
     target_addr = addr_by_username.get(target)
     if target_addr:
         notify = f"<{follower}> / {addr[0]}:{addr[1]} deixou de seguir você."
-        server_socket.sendto(notify.encode(), target_addr)
+        rdt_sendto(notify, target_addr)
 
 def handle_join(addr, parts):
     if len(parts) < 3:
-        server_socket.sendto("Uso: join <nome_do_grupo> <chave_grupo>".encode(), addr)
+        rdt_sendto("Uso: join <nome_do_grupo> <chave_grupo>", addr)
         return
 
     group_name = parts[1]
@@ -347,38 +388,38 @@ def handle_join(addr, parts):
 
     username = clients.get(addr)
     if not username:
-        server_socket.sendto("Você precisa estar logado para entrar em um grupo.".encode(), addr)
+        rdt_sendto("Você precisa estar logado para entrar em um grupo.", addr)
         return
 
     group = groups.get(group_name)
     if not group:
-        server_socket.sendto("Grupo não encontrado.".encode(), addr)
+        rdt_sendto("Grupo não encontrado.", addr)
         return
 
     if group["id"] != group_key:
-        server_socket.sendto("Chave incorreta.".encode(), addr)
+        rdt_sendto("Chave incorreta.", addr)
         return
 
     if addr in group["members"]:
-        server_socket.sendto("Você já está no grupo.".encode(), addr)
+        rdt_sendto("Você já está no grupo.", addr)
         return
         
     if addr in group['banned']:
-        server_socket.sendto("Você foi banido deste grupo.".encode(), addr)
+        rdt_sendto("Você foi banido deste grupo.", addr)
         return
 
     group["members"].add(addr)
     user_groups.setdefault(username["username"], set()).add(group_name)
-    server_socket.sendto(f"✅ Você entrou no grupo {group_name}".encode(), addr)
+    rdt_sendto(f"✅ Você entrou no grupo {group_name}", addr)
 
     join_message = f"[{username["username"]}/{addr[0]}:{addr[1]}] {username["username"]} acabou de entrar no grupo"
     for member_addr in group["members"]:
         if member_addr != addr:
-            server_socket.sendto(join_message.encode(), member_addr)
+            rdt_sendto(join_message, member_addr)
 
 def handle_chat_group(addr, parts):
     if len(parts) < 4:
-        server_socket.sendto("Uso: chat_group <nome_do_grupo> <chave_grupo> <mensagem>".encode(), addr)
+        rdt_sendto("Uso: chat_group <nome_do_grupo> <chave_grupo> <mensagem>", addr)
         return
 
     group_name = parts[1]
@@ -387,29 +428,29 @@ def handle_chat_group(addr, parts):
 
     username = clients.get(addr)
     if not username:
-        server_socket.sendto("Você precisa estar logado para entrar em um grupo.".encode(), addr)
+        rdt_sendto("Você precisa estar logado para entrar em um grupo.", addr)
         return
 
     group = groups.get(group_name)
     if not group:
-        server_socket.sendto("Grupo não encontrado.".encode(), addr)
+        rdt_sendto("Grupo não encontrado.", addr)
         return
 
     if group["id"] != group_key:
-        server_socket.sendto("Chave incorreta.".encode(), addr)
+        rdt_sendto("Chave incorreta.", addr)
         return
 
     if addr in group["members"]:
         for member in group['members']:
             if member not in group['banned']:  # Verificação se o membro está banido
                 msg = f"[{username}/{addr[0]}:{addr[1]}]: {message}"
-                server_socket.sendto(msg.encode(), member)  # Envia a mensagem para o membro não banido
-        server_socket.sendto(f"Mensagem enviada".encode(), addr)
+                rdt_sendto(msg, member)  # Envia a mensagem para o membro não banido
+        rdt_sendto(f"Mensagem enviada", addr)
         return
 
 def handle_chat_friend(addr, parts):
     if len(parts) < 3:
-        server_socket.sendto("Uso: chat_friend <nome_do_amigo> <mensagem>".encode(), addr)
+        rdt_sendto("Uso: chat_friend <nome_do_amigo> <mensagem>", addr)
         return
 
     friend_name = parts[1]
@@ -418,27 +459,31 @@ def handle_chat_friend(addr, parts):
 
     client = clients.get(addr)
     if not client:
-        server_socket.sendto("Você precisa estar logado para enviar mensagens.".encode(), addr)
+        rdt_sendto("Você precisa estar logado para enviar mensagens.", addr)
         return
     
     username = client["username"]
 
     amigos = following_map.get(username)
     if not amigos or friend_name not in amigos:
-        server_socket.sendto(f"{friend_name} não está na sua lista de amigos.".encode(), addr)
+        rdt_sendto(f"{friend_name} não está na sua lista de amigos.", addr)
         return
 
     destinatario_addr = addr_by_username.get(friend_name)
     if not destinatario_addr:
-        server_socket.sendto(f"{friend_name} não está online.".encode(), addr)
+        rdt_sendto(f"{friend_name} não está online.", addr)
         return
 
     msg = f"[{username}/{addr[0]}:{addr[1]} -> {friend_name}]: {message}"
-    server_socket.sendto(msg.encode(), destinatario_addr)
+    rdt_sendto(msg, destinatario_addr)
 
-    server_socket.sendto(f"Mensagem enviada para {friend_name}.".encode(), addr)
+    rdt_sendto(f"Mensagem enviada para {friend_name}.", addr)
 
 
+
+
+
+# Comandos disponíveis
 handlers = {
     "login": handle_login,
     "logout": handle_logout,
@@ -457,32 +502,37 @@ handlers = {
     "chat_friend": handle_chat_friend
 }
 
-# Thread para escutar comandos dos clientes
+# Thread de escuta de comandos
 def commandrcv():
     while True:
         try:
-            data, addr = server_socket.recvfrom(BUFFER_SIZE)
-            message = data.decode().strip()
+            message, addr = rdt_recvfrom()
+            parts = message.strip().split()
             if not message:
                 continue
 
-            parts = message.split()
             command = parts[0].lower()
+            print(f"[COMANDO] {command} recebido de {addr}")
 
             handler = handlers.get(command)
             if handler:
                 handler(addr, parts)
             else:
-                server_socket.sendto("Erro: comando desconhecido.".encode(), addr)
+                rdt_sendto("Erro: comando desconhecido.", addr)
 
         except Exception as e:
-            server_socket.sendto(f"Erro interno: {str(e)}".encode(), addr)
+            print(f"[ERRO] {e}")
+            try:
+                rdt_sendto(f"Erro interno: {str(e)}", addr)
+            except:
+                pass
 
-# Iniciar servidor
+# Iniciar thread do servidor
 threading.Thread(target=commandrcv, daemon=True).start()
 
+# Manter o servidor ativo
 try:
     while True:
         pass
 except KeyboardInterrupt:
-    print("\nServidor encerrado.")
+    print("\n[ENCERRANDO] Servidor encerrado.")
