@@ -1,47 +1,62 @@
 import socket
-import time
+import threading
 
-# Configuração do cliente
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 12000
 BUFFER_SIZE = 1024
-#FILE_TO_SEND = "data.txt"  # Arquivo a ser enviado (modelo txt)
-FILE_TO_SEND = "data.jpg"  # Arquivo a ser enviado (modelo jpg)
 
-
-# Criando o socket UDP
+# Cria socket UDP
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-client_socket.settimeout(1)  # Timeout de 1 segundo para receber ACKs
+client_socket.settimeout(2)
 
-# Enviar arquivo com RDT 3.0
-seq_num = 0  # Número de sequência inicial
-
-##### IMPLEMENTAR LOOP INFINITO
-command = input() 
-for i in range(0, len(command), BUFFER_SIZE - 1):
-    chunk = command[i:i + BUFFER_SIZE - 1]
-    packet = bytes([seq_num]) + chunk  # Adiciona número de sequência ao pacote
-
-    while True:  # Loop até receber o ACK correto
-        client_socket.sendto(packet, (SERVER_IP, SERVER_PORT))
-        print(f"Enviado pacote {seq_num}, aguardando ACK...")
-
+def listen_for_messages():
+    while True:
         try:
-            ack, _ = client_socket.recvfrom(BUFFER_SIZE)
-            if ack.decode() == f"ACK {seq_num}":
-                print(f"Recebido {ack.decode()}, enviando próximo pacote.")
-                seq_num = 1 - seq_num  # Alterna sequência (0 -> 1, 1 -> 0)
-                break  # Sai do loop se ACK correto for recebido
+            data, _ = client_socket.recvfrom(BUFFER_SIZE)
+            print("\n📩 Mensagem recebida:", data.decode())
+            print("> ", end="", flush=True)
         except socket.timeout:
-            print(f"Timeout! Reenviando pacote {seq_num}...")
+            continue
+        except Exception as e:
+            print(f"\n❌ Erro ao receber mensagem: {e}")
+            break
 
-# Enviar sinal de fim
-client_socket.sendto(b"END", (SERVER_IP, SERVER_PORT))
+# Thread para receber mensagens inesperadas do servidor
+threading.Thread(target=listen_for_messages, daemon=True).start()
 
-# Receber novo nome do arquivo
-response, _ = client_socket.recvfrom(BUFFER_SIZE)
-response = response.decode()
-print(f"{response}")
+print("=== ChatCin UDP ===")
+print("Comandos disponíveis:")
+print(" - login <nome>")
+print(" - logout")
+print(" - follow <nome>")
+print(" - unfollow <nome>")
+print(" - list:cinners")
+print(" - create_group <nome>")
+print(" - delete_group <nome>")
+print(" - list:groups")
+print(" - list:mygroups")
+print(" - leave <nome_do_grupo>")
+print(" - ban <usuario> <grupo>")
+print(" - join <nome_do_grupo> <chave_grupo>")
+print(" - /exit para sair")
 
+while True:
+    command = input("> ").strip()
+
+    if command == "/exit":
+        break
+
+    try:
+        # Envia comando para o servidor
+        client_socket.sendto(command.encode(), (SERVER_IP, SERVER_PORT))
+
+        # Aguarda resposta principal
+        response, _ = client_socket.recvfrom(BUFFER_SIZE)
+        print(response.decode())
+
+    except socket.timeout:
+        print("⚠️  Servidor não respondeu (timeout).")
+    except Exception as e:
+        print(f"Erro: {e}")
 
 client_socket.close()
