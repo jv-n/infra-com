@@ -1,9 +1,14 @@
 import socket
-import random
+import threading
+from datetime import datetime
 
-# Configuração do servidor
+# Configurações
 serverPort = 12000
 BUFFER_SIZE = 1024
+
+# Estruturas de controle
+clients = {}        # addr -> { username, login_time }
+users_online = set()
 
 # Criando socket UDP
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -11,52 +16,78 @@ server_socket.bind(('', serverPort))
 
 print(f"Servidor pronto na porta {serverPort}")
 
-while True:
-    # Recebe nome do arquivo
-    file_name, client_addr = server_socket.recvfrom(BUFFER_SIZE)
-    file_name = file_name.decode()
-    print(f"Recebido: {file_name} de {client_addr}")
+# Funções de manipulação de comandos
+def handle_login(addr, parts):
+    if len(parts) < 2:
+        server_socket.sendto("Erro: comando 'login' requer um nome de usuário.".encode(), addr)
+        return
 
-    # Criar arquivo para armazenar os dados recebidos
-    with open(f"servidor/server_{file_name}", "wb") as file:
-        expected_seq = 0  # Esperamos receber pacotes começando com 0
+    username = parts[1]
+    if username in users_online:
+        server_socket.sendto(f"Erro: usuário {username} já está logado.".encode(), addr)
+    else:
+        clients[addr] = {
+            "username": username,
+            "login_time": datetime.now()
+        }
+        users_online.add(username)
+        server_socket.sendto(f"Usuário {username} logado com sucesso.".encode(), addr)
+        print(f"[LOGIN] {username} ({addr})")
 
-        while True:
-            data, client_addr = server_socket.recvfrom(BUFFER_SIZE)
-            
-            # Se for o sinal de fim, encerra
-            if data == b"END":
-                break
-            
-            seq_num = data[0]  # Primeiro byte é o número de sequência
-            payload = data[1:]  # O restante são os dados reais
+def handle_logout(addr, parts):
+    client = clients.get(addr)
+    if client:
+        username = client['username']
+        users_online.discard(username)
+        clients.pop(addr)
+        server_socket.sendto(f"Logout do usuário {username} realizado com sucesso.".encode(), addr)
+        print(f"[LOGOUT] {username} ({addr})")
+    else:
+        server_socket.sendto("Erro: usuário não está logado.".encode(), addr)
 
-            # Simula perda de pacotes (30% de chance de descartar o pacote)
-            if random.random() < 0.3:
-                print(f"Pacote {seq_num} perdido! (Simulação)")
-                continue  # Não responde, simulando perda
-            
-            if seq_num == expected_seq:  # Verifica se é o pacote correto
-                file.write(payload)
-                print(f"Recebido pacote {seq_num}, enviando ACK {seq_num}")
-                server_socket.sendto(f"ACK {seq_num}".encode(), client_addr)
-                expected_seq = 1 - expected_seq  # Alterna sequência
+def handle_status(addr, parts):
+    client = clients.get(addr)
+    if client:
+        username = client['username']
+        login_time = client['login_time'].strftime("%H:%M:%S")
+        server_socket.sendto(f"Usuário: {username}, Logado desde: {login_time}".encode(), addr)
+    else:
+        server_socket.sendto("Você não está logado.".encode(), addr)
+
+# Mapeamento de comandos para funções
+handlers = {
+    "login": handle_login,
+    "logout": handle_logout,
+    "status": handle_status
+}
+
+# Thread para escutar os comandos dos clientes
+def commandrcv():
+    while True:
+        try:
+            data, addr = server_socket.recvfrom(BUFFER_SIZE)
+            message = data.decode().strip()
+            if not message:
+                continue
+
+            parts = message.split()
+            command = parts[0].lower()
+
+            handler = handlers.get(command)
+            if handler:
+                handler(addr, parts)
             else:
-                print(f"Pacote duplicado {seq_num}, reenviando ACK {1 - expected_seq}")
-                server_socket.sendto(f"ACK {1 - expected_seq}".encode(), client_addr)
+                server_socket.sendto("Erro: comando desconhecido.".encode(), addr)
 
-    print(f"Arquivo salvo como 'server_{file_name}'")
+        except Exception as e:
+            server_socket.sendto(f"Erro interno: {str(e)}".encode(), addr)
 
-    # Enviar novo nome do arquivo
-    new_file_name = f"modified_{file_name}"
-    server_socket.sendto(new_file_name.encode(), client_addr)
+# Iniciar servidor em thread
+threading.Thread(target=commandrcv, daemon=True).start()
 
-    # Enviar arquivo de volta ao cliente
-    with open(f"servidor/server_{file_name}", "rb") as file:
-        while chunk := file.read(BUFFER_SIZE):
-            server_socket.sendto(chunk, client_addr)
-
-    # Enviar sinal de fim
-    server_socket.sendto(b"END", client_addr)
-
-    print(f"Arquivo '{new_file_name}' enviado de volta para {client_addr}")
+# Manter o servidor rodando
+try:
+    while True:
+        pass
+except KeyboardInterrupt:
+    print("\nServidor encerrado.")
