@@ -107,7 +107,10 @@ def handle_list_groups(addr, parts):
         return
 
     username = client['username']
+    print("USERNAME: ", username)
     my_groups = user_groups.get(username, set())
+    print("USERGROUPS", user_groups)
+    print("MYGROUPS: ", my_groups)
     if not my_groups:
         server_socket.sendto("Você não participa de nenhum grupo.".encode(), addr)
         return
@@ -352,7 +355,7 @@ def handle_join(addr, parts):
     print("MEMBROS ANTES: ",group["members"])
 
     group["members"].add(addr)
-
+    user_groups.setdefault(username["username"], set()).add(group_name)
     print("MEMBROS DEPOIS: ",group["members"])
     server_socket.sendto(f"✅ Você entrou no grupo {group_name}".encode(), addr)
 
