@@ -1,6 +1,7 @@
 import socket
 import threading
 from datetime import datetime
+import uuid  # Para gerar IDs únicos de grupo
 
 # Configurações
 serverPort = 12000
@@ -11,6 +12,7 @@ clients = {}        # addr -> { username, login_time }
 users_online = set()
 addr_by_username = {}  # username -> addr
 following_map = {}     # username -> set of usernames being followed
+groups = {}            # group_name -> { id, admin, members, name }
 
 # Criando socket UDP
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -45,6 +47,11 @@ def handle_logout(addr, parts):
         clients.pop(addr)
         addr_by_username.pop(username, None)
         following_map.pop(username, None)
+
+        # Remover usuário dos grupos
+        for group in groups.values():
+            group['members'].discard(username)
+
         server_socket.sendto(f"Logout do usuário {username} realizado com sucesso.".encode(), addr)
         print(f"[LOGOUT] {username} ({addr})")
     else:
@@ -136,6 +143,74 @@ def handle_unfollow(addr, parts):
         notify = f"<{follower}> / {addr[0]}:{addr[1]} deixou de seguir você."
         server_socket.sendto(notify.encode(), target_addr)
 
+def handle_create_group(addr, parts):
+    client = clients.get(addr)
+    if not client:
+        server_socket.sendto("Você precisa estar logado para criar um grupo.".encode(), addr)
+        return
+
+    if len(parts) < 2:
+        server_socket.sendto("Uso: create_group <nome_do_grupo>".encode(), addr)
+        return
+
+    group_name = parts[1]
+    username = client['username']
+
+    for g in groups.values():
+        if g['admin'] == username and group_name == g['name']:
+            server_socket.sendto("Erro: você já criou um grupo com esse nome.".encode(), addr)
+            return
+
+    group_id = str(uuid.uuid4())[:8]
+    groups[group_name] = {
+        'id': group_id,
+        'admin': username,
+        'members': {username},
+        'name': group_name
+    }
+
+    server_socket.sendto(
+        f"O grupo de nome <{group_name}> foi criado com sucesso! ID: {group_id}".encode(), addr
+    )
+    print(f"[CREATE GROUP] {username} criou o grupo '{group_name}' com ID {group_id}")
+
+def handle_delete_group(addr, parts):
+    client = clients.get(addr)
+    if not client:
+        server_socket.sendto("Você precisa estar logado para excluir um grupo.".encode(), addr)
+        return
+
+    if len(parts) < 2:
+        server_socket.sendto("Uso: delete_group <nome_do_grupo>".encode(), addr)
+        return
+
+    group_name = parts[1]
+    username = client['username']
+
+    group = groups.get(group_name)
+    if not group:
+        server_socket.sendto("Erro: grupo não encontrado.".encode(), addr)
+        return
+
+    if group['admin'] != username:
+        server_socket.sendto("Erro: apenas o administrador pode excluir o grupo.".encode(), addr)
+        return
+
+    members = group['members'] - {username}
+    groups.pop(group_name)
+
+    server_socket.sendto(
+        f"O grupo '{group_name}' foi deletado com sucesso.".encode(), addr
+    )
+
+    for member in members:
+        member_addr = addr_by_username.get(member)
+        if member_addr:
+            notify = f"[{username}/{addr[0]}:{addr[1]}] O grupo '{group_name}' foi deletado pelo administrador."
+            server_socket.sendto(notify.encode(), member_addr)
+
+    print(f"[DELETE GROUP] {username} excluiu o grupo '{group_name}'")
+
 # Mapeamento de comandos para funções
 handlers = {
     "login": handle_login,
@@ -143,7 +218,9 @@ handlers = {
     "list:cinners": handle_list_cinners,
     "list:friends": handle_list_friends,
     "follow": handle_follow,
-    "unfollow": handle_unfollow
+    "unfollow": handle_unfollow,
+    "create_group": handle_create_group,
+    "delete_group": handle_delete_group
 }
 
 # Thread para escutar comandos dos clientes
