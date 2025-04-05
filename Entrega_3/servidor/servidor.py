@@ -45,20 +45,23 @@ def handle_logout(addr, parts):
     else:
         server_socket.sendto("Erro: usuário não está logado.".encode(), addr)
 
-def handle_status(addr, parts):
-    client = clients.get(addr)
-    if client:
-        username = client['username']
-        login_time = client['login_time'].strftime("%H:%M:%S")
-        server_socket.sendto(f"Usuário: {username}, Logado desde: {login_time}".encode(), addr)
+def handle_list_cinners(addr, parts):
+    if addr not in clients:
+        server_socket.sendto("Você precisa estar logado para usar esse comando.".encode(), addr)
+        return
+
+    if not users_online:
+        server_socket.sendto("Nenhum usuário está conectado no momento.".encode(), addr)
     else:
-        server_socket.sendto("Você não está logado.".encode(), addr)
+        lista = "\n".join(users_online)
+        server_socket.sendto(f"Usuários online:\n{lista}".encode(), addr)
+
 
 # Mapeamento de comandos para funções
 handlers = {
     "login": handle_login,
     "logout": handle_logout,
-    "status": handle_status
+    "list:cinners": handle_list_cinners
 }
 
 # Thread para escutar os comandos dos clientes
