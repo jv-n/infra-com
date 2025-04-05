@@ -22,8 +22,7 @@ def listen_for_messages():
             break
 
 # Thread para receber mensagens inesperadas do servidor
-listener_thread = threading.Thread(target=listen_for_messages, daemon=True)
-listener_thread.start()
+threading.Thread(target=listen_for_messages, daemon=True).start()
 
 print("=== ChatCin UDP ===")
 print("Comandos disponíveis:")
@@ -32,6 +31,13 @@ print(" - logout")
 print(" - follow <nome>")
 print(" - unfollow <nome>")
 print(" - list:cinners")
+print(" - create_group <nome>")
+print(" - delete_group <nome>")
+print(" - list:groups")
+print(" - list:mygroups")
+print(" - leave <nome_do_grupo>")
+print(" - ban <usuario> <grupo>")
+print(" - join <nome_do_grupo> <chave_grupo>")
 print(" - /exit para sair")
 
 while True:
