@@ -10,10 +10,12 @@ client_socket.settimeout(1)
 
 seq_num = 0
 
-
-def send_command_rdt(command: str):
-
-    # Divide em pacotes RDT
+print("=== ChatCin UDP ===")
+print("Digite um comando (/exit para sair)")
+while True:
+    command = input("> ")
+    if command == "/exit":
+        break
     for i in range(0, len(command), BUFFER_SIZE - 1):
         chunk = command[i:i + BUFFER_SIZE - 1]
         packet = bytes([seq_num]) + chunk.encode()
@@ -38,45 +40,5 @@ def send_command_rdt(command: str):
     response = response.decode()
     print(f"{response}")
 
-
-def commandrcv(command: str):
-    if command.startswith("login "):
-        send_command_rdt(command)
-    elif command == "logout":
-        send_command_rdt(command)
-    elif command == "list:cinners":
-        send_command_rdt(command)
-    elif command == "list:friends":
-        send_command_rdt(command)
-    elif command == "list:mygroups":
-        send_command_rdt(command)
-    elif command == "list:groups":
-        send_command_rdt(command)
-    elif command.startswith("follow ") or command.startswith("unfollow "):
-        send_command_rdt(command)
-    elif command.startswith("create_group ") or command.startswith("delete_group "):
-        send_command_rdt(command)
-    elif command.startswith("join ") or command.startswith("leave "):
-        send_command_rdt(command)
-    elif command.startswith("ban "):
-        send_command_rdt(command)
-    elif command.startswith("chat_group "):
-        send_command_rdt(command)
-    elif command.startswith("chat_friend "):
-        send_command_rdt(command)
-    elif command == "/exit":
-        print("Cliente encerrando conexão...")
-        return False
-    else:
-        print("Comando inválido ou não reconhecido.")
-    return True
-
-#LOOP PRINCIPAL
-print("=== ChatCin UDP ===")
-print("Digite um comando (/exit para sair)")
-while True:
-    user_command = input(">> ")
-    if not commandrcv(user_command):
-        break
 
 client_socket.close()
