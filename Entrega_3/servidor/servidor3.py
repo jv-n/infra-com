@@ -30,3 +30,5 @@ def commandrcv(address, server_socket):
                     users_online.discard(username)
                     clients.pop(addr)
                     server_socket.sendto(f"Logout do usuário {username} realizado com sucesso".encode(), addr)
+        except Exception as e:
+                server_socket.sendto(f"erro {str(e)}".enconde(), ,addr)
