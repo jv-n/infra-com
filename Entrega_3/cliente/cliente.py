@@ -112,6 +112,7 @@ try:
     while True:
         command = input("> ").strip()
         if command == "/exit":
+            print("Saindo...")
             break
         rdt_send(client_socket, server_address, command.encode('utf-8'))
 except KeyboardInterrupt:
