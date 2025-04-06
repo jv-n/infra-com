@@ -1,78 +1,103 @@
 import socket
+import threading
+import random
 import time
 
-SERVER_IP = "127.0.0.1"
-SERVER_PORT = 12000
 BUFFER_SIZE = 1024
-seq_num = 0  # Número de sequência inicial
-
-# Cria socket UDP
+LOSS_PROBABILITY = 0
+server_address = ('localhost', 12345)
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-client_socket.settimeout(1)
 
-def rdt_send(message: bytes):
-    global seq_num
-    packet = bytes([seq_num]) + message
+seq_num_send = 0
+seq_num_recv = 0
 
+ack_lock = threading.Lock()
+last_ack_received = None  # usado para checar ACKs recebidos
+
+
+def rdt_send(sock, addr, msg):
+    global seq_num_send, last_ack_received
+
+    if random.random() < LOSS_PROBABILITY:
+        print("[X] Pacote perdido (simulado)")
+        return
+
+    packet = f"{seq_num_send}|".encode('utf-8') + msg
+    sock.sendto(packet, addr)
 
     while True:
-        client_socket.sendto(packet, (SERVER_IP, SERVER_PORT))
-
-        try:
-            response, _ = client_socket.recvfrom(BUFFER_SIZE)
-
-            if response.decode() == f"ACK {seq_num}":
-                seq_num = 1 - seq_num
+        with ack_lock:
+            if last_ack_received == seq_num_send:
+                seq_num_send = 1 - seq_num_send
+                last_ack_received = None
                 return
+        time.sleep(0.1)  # espera antes de verificar de novo
 
-        except socket.timeout:
-            print("⚠️  Timeout: Servidor não respondeu. Reenviando...")
 
-def rdt_recv():
+def rdt_receive_thread(sock):
+    global seq_num_recv, last_ack_received
+
     while True:
         try:
-            data, _ = client_socket.recvfrom(BUFFER_SIZE)
-            recv_seq = data[0]
-            message = data[1:]
+            data, addr = sock.recvfrom(BUFFER_SIZE)
 
-            client_socket.sendto(f"ACK {recv_seq}".encode(), (SERVER_IP, SERVER_PORT))
+            # Verifica se é ACK
+            if data.startswith(b"ACK"):
+                ack_num = int(data.decode('utf-8')[3:])
+                with ack_lock:
+                    last_ack_received = ack_num
+                continue
 
-            return message.decode()
+            # Trata mensagem normal
+            if b'|' not in data:
+                continue
 
-        except socket.timeout:
-            print("⚠️  Timeout: Aguardando pacote do servidor...")
+            header, msg = data.split(b'|', 1)
+            recv_seq_num = int(header.decode('utf-8'))
 
+            if recv_seq_num == seq_num_recv:
+                sock.sendto(f"ACK{recv_seq_num}".encode('utf-8'), addr)
+                seq_num_recv = 1 - seq_num_recv
+                print(f"{msg.decode('utf-8')}\n> ", end='', flush=True)
+            else:
+                ack_to_resend = 1 - seq_num_recv
+                sock.sendto(f"ACK{ack_to_resend}".encode('utf-8'), addr)
+
+        except Exception as e:
+            print(f"[Erro RDT Thread]: {e}")
+
+
+# Inicia thread de recepção
+threading.Thread(target=rdt_receive_thread, args=(client_socket,), daemon=True).start()
+
+# Interface do usuário
 print("=== ChatCin UDP ===")
 print("Comandos disponíveis:")
 print(" - login <nome>")
 print(" - logout")
-print(" - follow <nome>") #erro
+print(" - follow <nome>")
 print(" - unfollow <nome>")
 print(" - list:cinners")
 print(" - create_group <nome>")
 print(" - delete_group <nome>")
-print(" - list:groups") #erro
+print(" - list:groups") 
 print(" - list:mygroups")
 print(" - leave <nome_do_grupo>")
-print(" - ban <usuario> <grupo>") #erro
+print(" - ban <usuario> <grupo>") 
 print(" - join <nome_do_grupo> <chave_grupo>")
-print(" - chat_group <nome_do_grupo> <chave_grupo> <mensagem>") #erro
-print(" - chat_friend <nome_do_amigo> <mensagem>") #erro
+print(" - chat_group <nome_do_grupo> <chave_grupo> <mensagem>") 
+print(" - chat_friend <nome_do_amigo> <mensagem>") 
 print(" - /exit para sair")
 
-while True:
-    command = input("> ").strip()
 
-    if command == "/exit":
-        break
-
-    try:
-        rdt_send(command.encode())
-        response = rdt_recv()
-        print(response)
-
-    except Exception as e:
-        print(f"Erro: {e}")
+try:
+    while True:
+        command = input("> ").strip()
+        if command == "/exit":
+            break
+        rdt_send(client_socket, server_address, command.encode('utf-8'))
+except KeyboardInterrupt:
+    print("\nSaindo...")
 
 client_socket.close()
 print("Conexão encerrada.")
