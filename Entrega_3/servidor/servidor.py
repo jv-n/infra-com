@@ -190,10 +190,10 @@ def handle_delete_group(addr, parts):
         member_client = db_clients.get(member_addr)
         if member_client:
             member_username = member_client['username']
-            user_groups.get(member_username, set()).discard(group_name)
-            user_groups.get(username, set()).discard(group_name)
+            user_groups.get(member_username, set()).remove(group_name)
+            user_groups.get(username, set()).remove(group_name)
 
-    created_groups.get(username, set()).discard(group_name)
+    created_groups.get(username, set()).remove(group_name)
     groups.pop(group_name)
 
     rdt_send(server_socket, addr, f"Grupo '{group_name}' excluído com sucesso.".encode())
