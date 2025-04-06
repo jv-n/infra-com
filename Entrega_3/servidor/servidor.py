@@ -4,8 +4,9 @@ from datetime import datetime
 import uuid
 
 # Configurações
+LOSS_PROBABILITY = 0.2
 BUFFER_SIZE = 1024
-LOSS_PROBABILITY = 0
+TIMEOUT = 2.0  # segundos
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_socket.bind(('localhost', 12345))
 print("Servidor RDT iniciado...")
@@ -26,38 +27,51 @@ seq_num_recv_map = {}  # addr -> seq_num_recv
 # ========= RDT por cliente =========
 def rdt_send(sock, addr, msg):
     seq_num_send = seq_num_send_map.get(addr, 0)
-
-    if random.random() < LOSS_PROBABILITY:
-        print("[X] Pacote perdido (simulado)")
-        return
-
-    packet = f"{seq_num_send}|".encode('utf-8') + msg
-    sock.sendto(packet, addr)
+    packet = f"DATA|{seq_num_send}|".encode() + msg
 
     while True:
-        ack_data, _ = sock.recvfrom(BUFFER_SIZE)
-        if ack_data == f"ACK{seq_num_send}".encode('utf-8'):
-            print(f"[✓] ACK{seq_num_send} recebido de {addr}")
-            seq_num_send_map[addr] = 1 - seq_num_send
-            break
+        if random.random() < LOSS_PROBABILITY:
+            print(f"[X] Pacote para {addr} perdido (simulado)")
         else:
-            print("[!] ACK incorreto, aguardando o correto...")
+            sock.sendto(packet, addr)
+            print(f"[→] Enviado para {addr}: seq={seq_num_send}")
+
+        sock.settimeout(TIMEOUT)
+        try:
+            ack_data, _ = sock.recvfrom(BUFFER_SIZE)
+            if ack_data.startswith(b"ACK"):
+                ack_num = int(ack_data.decode().split("|")[1])
+                if ack_num == seq_num_send:
+                    print(f"[✓] ACK{ack_num} recebido de {addr}")
+                    seq_num_send_map[addr] = 1 - seq_num_send
+                    break
+        except socket.timeout:
+            print(f"[!] Timeout esperando ACK{seq_num_send} de {addr}, reenviando...")
 
 def rdt_receive(sock):
     while True:
         data, addr = sock.recvfrom(BUFFER_SIZE)
-        if b'|' not in data:
+
+        if not data.startswith(b"DATA|"):
             continue
-        header, msg = data.split(b'|', 1)
-        recv_seq_num = int(header.decode('utf-8'))
+
+        try:
+            _, seq_str, msg = data.split(b"|", 2)
+            recv_seq_num = int(seq_str.decode())
+        except:
+            continue  # pacote malformado
+
         expected = seq_num_recv_map.get(addr, 0)
 
         if recv_seq_num == expected:
-            sock.sendto(f"ACK{recv_seq_num}".encode('utf-8'), addr)
+            print(f"[✓] Mensagem recebida de {addr}: {msg.decode()}")
+            ack_packet = f"ACK|{recv_seq_num}".encode()
+            sock.sendto(ack_packet, addr)
             seq_num_recv_map[addr] = 1 - expected
-            return msg, addr
         else:
-            sock.sendto(f"ACK{1 - expected}".encode('utf-8'), addr)
+            # ACK duplicado
+            ack_packet = f"ACK|{1 - expected}".encode()
+            sock.sendto(ack_packet, addr)
 
 # ========= Comandos =========
 def handle_login(addr, parts):
@@ -464,7 +478,8 @@ def processar_comando(msg_str, addr):
         return
 
     comando = partes[0]
-
+    print("COMANDO: ", comando)
+    print("PARTES[0]: ", partes[0])
     if comando == "login":
         handle_login(addr, partes)
     elif comando == "logout":
@@ -500,9 +515,12 @@ def processar_comando(msg_str, addr):
 
 # ========= Loop Principal =========
 while True:
+    print("AAAAA")
     try:
         msg, client_addr = rdt_receive(server_socket)
+        print("BBBBBBB")
         msg_str = msg.decode('utf-8')
+        print("CCCCCCCCC")
         print(f"[{client_addr}] -> {msg_str}")
         processar_comando(msg_str, client_addr)
 

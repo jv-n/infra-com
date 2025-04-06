@@ -4,34 +4,43 @@ import random
 import time
 
 BUFFER_SIZE = 1024
-LOSS_PROBABILITY = 0
+LOSS_PROBABILITY = 0.0
+TIMEOUT = 2.0
 server_address = ('localhost', 12345)
+
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+client_socket.bind(('localhost', 0))  # importante para receber dados no Windows
 
 seq_num_send = 0
 seq_num_recv = 0
 
 ack_lock = threading.Lock()
-last_ack_received = None  # usado para checar ACKs recebidos
+last_ack_received = None
 
 
 def rdt_send(sock, addr, msg):
     global seq_num_send, last_ack_received
 
-    if random.random() < LOSS_PROBABILITY:
-        print("[X] Pacote perdido (simulado)")
-        return
-
-    packet = f"{seq_num_send}|".encode('utf-8') + msg
-    sock.sendto(packet, addr)
+    packet = f"DATA|{seq_num_send}|".encode() + msg
 
     while True:
-        with ack_lock:
-            if last_ack_received == seq_num_send:
-                seq_num_send = 1 - seq_num_send
-                last_ack_received = None
-                return
-        time.sleep(0.1)  # espera antes de verificar de novo
+        if random.random() < LOSS_PROBABILITY:
+            print(f"[X] Pacote para {addr} perdido (simulado)")
+        else:
+            sock.sendto(packet, addr)
+            print(f"[→] Enviado: seq={seq_num_send}")
+
+        start_time = time.time()
+        while time.time() - start_time < TIMEOUT:
+            with ack_lock:
+                if last_ack_received == seq_num_send:
+                    print(f"[✓] ACK{seq_num_send} recebido")
+                    seq_num_send = 1 - seq_num_send
+                    last_ack_received = None
+                    return
+            time.sleep(0.1)
+
+        print(f"[!] Timeout esperando ACK{seq_num_send}, reenviando...")
 
 
 def rdt_receive_thread(sock):
@@ -40,29 +49,38 @@ def rdt_receive_thread(sock):
     while True:
         try:
             data, addr = sock.recvfrom(BUFFER_SIZE)
+            if not data:
+                continue
 
-            # Verifica se é ACK
             if data.startswith(b"ACK"):
-                ack_num = int(data.decode('utf-8')[3:])
-                with ack_lock:
-                    last_ack_received = ack_num
+                try:
+                    parts = data.decode().split("|")
+                    if len(parts) == 2:
+                        ack_num = int(parts[1])
+                        with ack_lock:
+                            last_ack_received = ack_num
+                        continue
+                    else:
+                        print(f"[!] ACK malformado: {data}")
+                except Exception as e:
+                    print(f"[!] Erro ao processar ACK: {e}")
                 continue
 
-            # Trata mensagem normal
-            if b'|' not in data:
-                continue
+            if data.startswith(b"DATA|"):
+                try:
+                    _, seq_str, msg = data.split(b"|", 2)
+                    recv_seq_num = int(seq_str.decode())
+                except Exception as e:
+                    print(f"[!] Erro ao decodificar pacote DATA: {e}")
+                    continue
 
-            header, msg = data.split(b'|', 1)
-            recv_seq_num = int(header.decode('utf-8'))
-
-            if recv_seq_num == seq_num_recv:
-                sock.sendto(f"ACK{recv_seq_num}".encode('utf-8'), addr)
-                seq_num_recv = 1 - seq_num_recv
-                print(f"{msg.decode('utf-8')}\n> ", end='', flush=True)
-            else:
-                ack_to_resend = 1 - seq_num_recv
-                sock.sendto(f"ACK{ack_to_resend}".encode('utf-8'), addr)
-
+                if recv_seq_num == seq_num_recv:
+                    print(f"[←] Recebido: {msg.decode()}")
+                    sock.sendto(f"ACK|{recv_seq_num}".encode(), addr)
+                    seq_num_recv = 1 - seq_num_recv
+                else:
+                    ack_to_resend = 1 - seq_num_recv
+                    sock.sendto(f"ACK|{ack_to_resend}".encode(), addr)
         except Exception as e:
             print(f"[Erro RDT Thread]: {e}")
 
@@ -80,15 +98,14 @@ print(" - unfollow <nome>")
 print(" - list:cinners")
 print(" - create_group <nome>")
 print(" - delete_group <nome>")
-print(" - list:groups") 
+print(" - list:groups")
 print(" - list:mygroups")
 print(" - leave <nome_do_grupo>")
-print(" - ban <usuario> <grupo>") 
+print(" - ban <usuario> <grupo>")
 print(" - join <nome_do_grupo> <chave_grupo>")
-print(" - chat_group <nome_do_grupo> <chave_grupo> <mensagem>") 
-print(" - chat_friend <nome_do_amigo> <mensagem>") 
+print(" - chat_group <nome_do_grupo> <chave_grupo> <mensagem>")
+print(" - chat_friend <nome_do_amigo> <mensagem>")
 print(" - /exit para sair")
-
 
 try:
     while True:
