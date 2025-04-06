@@ -24,17 +24,14 @@ created_groups = {}    # username -> set of group names criados
 # Criando socket UDP
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_socket.bind(('', serverPort))
-server_socket.settimeout(1)
+server_socket.settimeout(15)
 
 print(f"[SERVIDOR] Servidor pronto na porta {serverPort}")
 
 # Função RDT de recepção
 def rdt_recvfrom():
     while True:
-        try:
-            data, addr = server_socket.recvfrom(BUFFER_SIZE)
-        except socket.timeout:
-            continue
+        data, addr = server_socket.recvfrom(BUFFER_SIZE)
 
         seq_num = data[0]
         payload = data[1:]
@@ -58,7 +55,6 @@ def rdt_sendto(message: str, addr):
 
     packet = bytes([send_seq[addr]]) + message.encode()
 
-
     while True:
         server_socket.sendto(packet, addr)
         try:
@@ -67,7 +63,8 @@ def rdt_sendto(message: str, addr):
                 send_seq[addr] = 1 - send_seq[addr]
                 return
         except socket.timeout:
-            print(f"⚠️  Timeout: reenviando pacote para {addr}...")
+            print(f"[RDT] Timeout: Aguardando ACK de {addr}")  # Debug para timeout
+            continue
 
 # Manipuladores de comandos
 def handle_login(addr, parts):
@@ -83,9 +80,12 @@ def handle_login(addr, parts):
             "username": username,
             "login_time": datetime.now()
         }
+        addr_by_username[username] = addr
         users_online.add(username)
+        following_map.setdefault(username, set())
         rdt_sendto(f"Usuário {username} logado com sucesso.", addr)
         print(f"[LOGIN] {username} ({addr}) logado.")
+
 
 def handle_logout(addr, parts):
     client = clients.get(addr)
@@ -93,8 +93,15 @@ def handle_logout(addr, parts):
         username = client['username']
         users_online.discard(username)
         clients.pop(addr)
+        addr_by_username.pop(username, None)
+        following_map.pop(username, None)
+
+        # Remover usuário dos grupos
+        for group in groups.values():
+            group['members'].discard(username)
+
         rdt_sendto(f"Logout do usuário {username} realizado com sucesso.", addr)
-        print(f"[LOGOUT] {username} ({addr}) deslogado.")
+        print(f"[LOGOUT] {username} ({addr})")
     else:
         rdt_sendto("Erro: usuário não está logado.", addr)
 
@@ -348,9 +355,15 @@ def handle_follow(addr, parts):
 
     # Notifica quem foi seguido
     target_addr = addr_by_username.get(target)
+    print("TARGET: ", target_addr)	
     if target_addr:
+        print(f"[FOLLOW] Notificando {target} em {target_addr}")  # Debug
         notify = f"Você foi seguido por <{follower}> / {addr[0]}:{addr[1]}"
-        rdt_sendto(notify, target_addr)
+        rdt_sendto(notify.encode(), target_addr)
+    else:
+        print(f"[FOLLOW] Erro: Não foi possível encontrar o endereço de {target}")  # Debug
+        rdt_sendto(f"Erro: O usuário {target} não está online.", addr)
+
 
 def handle_unfollow(addr, parts):
     client = clients.get(addr)
@@ -455,7 +468,6 @@ def handle_chat_friend(addr, parts):
 
     friend_name = parts[1]
     message = ' '.join(parts[2:])
-
 
     client = clients.get(addr)
     if not client:
