@@ -7,6 +7,8 @@ BUFFER_SIZE = 1024
 LOSS_PROBABILITY = 0.1
 server_address = ('127.0.0.1', 12345)
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+client_socket.settimeout(0.5)  # <- Adicione aqui
+
 
 seq_num_send = 0
 seq_num_recv = 0
