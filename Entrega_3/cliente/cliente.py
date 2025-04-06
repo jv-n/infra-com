@@ -5,7 +5,7 @@ import time
 
 BUFFER_SIZE = 1024
 LOSS_PROBABILITY = 0.1
-server_address = ('localhost', 12345)
+server_address = ('127.0.0.1', 12345)
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 seq_num_send = 0
