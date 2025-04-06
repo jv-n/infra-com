@@ -50,29 +50,34 @@ def rdt_send(sock, addr, msg):
 
 def rdt_receive(sock):
     while True:
-        data, addr = sock.recvfrom(BUFFER_SIZE)
-
-        if not data.startswith(b"DATA|"):
-            continue
-
         try:
-            _, seq_str, msg = data.split(b"|", 2)
-            recv_seq_num = int(seq_str.decode())
-        except:
-            continue  # pacote malformado
+            data, addr = sock.recvfrom(BUFFER_SIZE)
 
-        expected = seq_num_recv_map.get(addr, 0)
+            if not data.startswith(b"DATA|"):
+                continue
 
-        if recv_seq_num == expected:
-            print(f"[✓] Mensagem recebida de {addr}: {msg.decode()}")
-            ack_packet = f"ACK|{recv_seq_num}".encode()
-            sock.sendto(ack_packet, addr)
-            seq_num_recv_map[addr] = 1 - expected
-        else:
-            # ACK duplicado
-            ack_packet = f"ACK|{1 - expected}".encode()
-            sock.sendto(ack_packet, addr)
+            try:
+                _, seq_str, msg = data.split(b"|", 2)
+                recv_seq_num = int(seq_str.decode())
+            except Exception as e:
+                print(f"[!] Erro ao decodificar pacote: {e}")
+                continue
 
+            expected = seq_num_recv_map.get(addr, 0)
+
+            if recv_seq_num == expected:
+                print(f"[✓] Mensagem recebida de {addr}: {msg.decode()}")
+                ack_packet = f"ACK|{recv_seq_num}".encode()
+                sock.sendto(ack_packet, addr)
+                seq_num_recv_map[addr] = 1 - expected
+                return msg.decode(), addr  # ✅ Retorna aqui!
+            else:
+                # ACK duplicado (pacote já recebido)
+                ack_packet = f"ACK|{1 - expected}".encode()
+                sock.sendto(ack_packet, addr)
+
+        except Exception as e:
+            print(f"[Erro em rdt_receive]: {e}")
 # ========= Comandos =========
 def handle_login(addr, parts):
     if len(parts) < 2:
@@ -515,14 +520,10 @@ def processar_comando(msg_str, addr):
 
 # ========= Loop Principal =========
 while True:
-    print("AAAAA")
     try:
         msg, client_addr = rdt_receive(server_socket)
-        print("BBBBBBB")
-        msg_str = msg.decode('utf-8')
-        print("CCCCCCCCC")
-        print(f"[{client_addr}] -> {msg_str}")
-        processar_comando(msg_str, client_addr)
+        print(f"[{client_addr}] -> {msg}")
+        processar_comando(msg, client_addr)
 
     except Exception as e:
         print(f"Erro no servidor: {e}")
