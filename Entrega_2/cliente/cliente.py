@@ -8,10 +8,9 @@ BUFFER_SIZE = 1024
 #FILE_TO_SEND = "data.txt"  # Arquivo a ser enviado (modelo txt)
 FILE_TO_SEND = "data.jpg"  # Arquivo a ser enviado (modelo jpg)
 
-
 # Criando o socket UDP
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-client_socket.settimeout(1)  # Timeout de 1 segundo para receber ACKs
+client_socket.settimeout(15)  # Timeout de 1 segundo para receber ACKs
 
 # Enviar nome do arquivo
 client_socket.sendto(FILE_TO_SEND.encode(), (SERVER_IP, SERVER_PORT))
