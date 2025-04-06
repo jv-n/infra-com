@@ -4,7 +4,7 @@ import random
 import time
 
 BUFFER_SIZE = 1024
-LOSS_PROBABILITY = 0
+LOSS_PROBABILITY = 0.1
 server_address = ('localhost', 12345)
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -14,25 +14,40 @@ seq_num_recv = 0
 ack_lock = threading.Lock()
 last_ack_received = None  # usado para checar ACKs recebidos
 
-
+LOSS_PROBABILITY = 0.1  # simulação de perda
+BUFFER_SIZE = 1024
 def rdt_send(sock, addr, msg):
     global seq_num_send, last_ack_received
 
-    if random.random() < LOSS_PROBABILITY:
-        print("[X] Pacote perdido (simulado)")
-        return
+    seq = seq_num_send
+    packet = f"{seq}|".encode('utf-8') + msg
 
-    packet = f"{seq_num_send}|".encode('utf-8') + msg
-    sock.sendto(packet, addr)
+    retries = 0
+    max_retries = 10
+    timeout = 1  # segundos
 
-    while True:
-        with ack_lock:
-            if last_ack_received == seq_num_send:
-                seq_num_send = 1 - seq_num_send
-                last_ack_received = None
-                return
-        time.sleep(0.1)  # espera antes de verificar de novo
+    while retries < max_retries:
+        if random.random() < LOSS_PROBABILITY:
+            print("[X] Pacote perdido (simulado)")
+        else:
+            sock.sendto(packet, addr)
+            print(f"[>] Enviado seq={seq} para {addr}")
 
+        # Espera por ACK no tempo configurado
+        start = time.time()
+        while time.time() - start < timeout:
+            with ack_lock:
+                if last_ack_received == seq:
+                    print(f"[✓] ACK{seq} recebido de {addr}")
+                    seq_num_send = 1 - seq
+                    last_ack_received = None
+                    return
+            time.sleep(0.05)
+
+        print("Timeout, reenviando...")
+        retries += 1
+
+    print("[✖] Falha após muitas tentativas.")
 
 def rdt_receive_thread(sock):
     global seq_num_recv, last_ack_received
@@ -63,9 +78,10 @@ def rdt_receive_thread(sock):
                 ack_to_resend = 1 - seq_num_recv
                 sock.sendto(f"ACK{ack_to_resend}".encode('utf-8'), addr)
 
+        except socket.timeout:
+            continue  # só ignora timeouts
         except Exception as e:
             print(f"[Erro RDT Thread]: {e}")
-
 
 # Inicia thread de recepção
 threading.Thread(target=rdt_receive_thread, args=(client_socket,), daemon=True).start()
