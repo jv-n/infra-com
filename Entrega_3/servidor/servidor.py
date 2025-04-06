@@ -7,7 +7,7 @@ import uuid
 BUFFER_SIZE = 1024
 LOSS_PROBABILITY = 0.1
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-server_socket.bind(('localhost', 12345))
+server_socket.bind(('127.0.0.1', 12345))
 print("Servidor RDT iniciado...")
 
 # Estado
