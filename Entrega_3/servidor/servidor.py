@@ -5,7 +5,7 @@ import uuid
 
 # Configurações
 BUFFER_SIZE = 1024
-LOSS_PROBABILITY = 0
+LOSS_PROBABILITY = 0.1
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_socket.bind(('localhost', 12345))
 print("Servidor RDT iniciado...")
@@ -24,40 +24,57 @@ seq_num_send_map = {}  # addr -> seq_num_send
 seq_num_recv_map = {}  # addr -> seq_num_recv
 
 # ========= RDT por cliente =========
-def rdt_send(sock, addr, msg):
+def rdt_send(sock, addr, msg, timeout=2, max_retries=5):
     seq_num_send = seq_num_send_map.get(addr, 0)
-
-    if random.random() < LOSS_PROBABILITY:
-        print("[X] Pacote perdido (simulado)")
-        return
-
     packet = f"{seq_num_send}|".encode('utf-8') + msg
-    sock.sendto(packet, addr)
+    retries = 0
 
-    while True:
-        ack_data, _ = sock.recvfrom(BUFFER_SIZE)
-        if ack_data == f"ACK{seq_num_send}".encode('utf-8'):
-            print(f"[✓] ACK{seq_num_send} recebido de {addr}")
-            seq_num_send_map[addr] = 1 - seq_num_send
-            break
+    while retries < max_retries:
+        if random.random() < LOSS_PROBABILITY:
+            print("[X] Pacote perdido (simulado)")
         else:
-            print("[!] ACK incorreto, aguardando o correto...")
+            sock.sendto(packet, addr)
+            print(f"[→] Enviado seq {seq_num_send} para {addr}")
+
+        sock.settimeout(timeout)
+
+        try:
+            ack_data, _ = sock.recvfrom(BUFFER_SIZE)
+            if ack_data == f"ACK{seq_num_send}".encode('utf-8'):
+                print(f"[✓] ACK{seq_num_send} recebido de {addr}")
+                seq_num_send_map[addr] = 1 - seq_num_send
+                sock.settimeout(None)
+                return
+            else:
+                print("[!] ACK incorreto, aguardando o correto...")
+
+        except socket.timeout:
+            retries += 1
+            print(f"[!] Timeout esperando ACK{seq_num_send}, tentativa {retries}/{max_retries}")
+
+    print(f"[✗] Falha após {max_retries} tentativas para {addr}")
+    sock.settimeout(None)
 
 def rdt_receive(sock):
     while True:
-        data, addr = sock.recvfrom(BUFFER_SIZE)
-        if b'|' not in data:
-            continue
-        header, msg = data.split(b'|', 1)
-        recv_seq_num = int(header.decode('utf-8'))
-        expected = seq_num_recv_map.get(addr, 0)
+        try:
+            sock.settimeout(None)  # Espera indefinidamente por pacotes
+            data, addr = sock.recvfrom(BUFFER_SIZE)
+            if b'|' not in data:
+                continue
+            header, msg = data.split(b'|', 1)
+            recv_seq_num = int(header.decode('utf-8'))
+            expected = seq_num_recv_map.get(addr, 0)
 
-        if recv_seq_num == expected:
-            sock.sendto(f"ACK{recv_seq_num}".encode('utf-8'), addr)
-            seq_num_recv_map[addr] = 1 - expected
-            return msg, addr
-        else:
-            sock.sendto(f"ACK{1 - expected}".encode('utf-8'), addr)
+            if recv_seq_num == expected:
+                sock.sendto(f"ACK{recv_seq_num}".encode('utf-8'), addr)
+                seq_num_recv_map[addr] = 1 - expected
+                return msg, addr
+            else:
+                sock.sendto(f"ACK{1 - expected}".encode('utf-8'), addr)
+        except Exception as e:
+            print(f"[!] Erro no rdt_receive: {e}")
+
 
 # ========= Comandos =========
 def handle_login(addr, parts):
@@ -390,7 +407,7 @@ def handle_join(addr, parts):
 
     group["members"].add(addr)
     user_groups.setdefault(username["username"], set()).add(group_name)
-    rdt_send(server_socket, addr, f"Você entrou no grupo {group_name}".encode())
+    rdt_send(server_socket, addr, f"✅ Você entrou no grupo {group_name}".encode())
 
     join_message = f"[{username['username']}/{addr[0]}:{addr[1]}] {username['username']} acabou de entrar no grupo"
     for member_addr in group["members"]:
